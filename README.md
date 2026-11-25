@@ -1,10 +1,11 @@
 # Tallybook
 
+
+
 Tallybook is settlement bookkeeping for services that charge per HTTP
 request — APIs paid by AI agents and other machines over Stellar, using
 the [x402](https://www.x402.org/) protocol, MPP charge mode, or MPP
 payment channels.
-
 ## Relationship to tallybook-contracts
 
 The Soroban contracts Tallybook settles against — `price_book`,
@@ -178,6 +179,7 @@ asserting it.
   then discarded, once its recipient doesn't match). See
   `internal/indexer/ingest.go`'s package doc comment for the full
   reasoning.
+  
 - **The settler doesn't estimate a wall-clock refund deadline.**
   `refund_deadline_ledger` is a ledger number; converting it to a
   wall-clock countdown for retry pacing would need verified,
@@ -195,12 +197,14 @@ asserting it.
 
 ## Documentation
 
+
 - [Operator runbook](docs/operator-runbook.md) — operational notes for
   deploying and running the on-chain and off-chain pieces, including
   known hazards worth knowing before you hit them yourself.
 - [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
 - `CLAUDE.md` — the full specification this codebase implements.
+
 
 ## License
 
