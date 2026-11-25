@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stellar/go-stellar-sdk/keypair"
 
 	"github.com/Tallybook-Org/tallybook/internal/stellar"
 )
@@ -300,4 +301,75 @@ func ExampleDaemon_Run() {
 	// Run returns once ctx is done: here when the timeout elapses, in
 	// production on SIGINT/SIGTERM.
 	<-done
+}
+
+// The production LiveChannel is *stellar.Channel; this assertion keeps
+// that true at compile time rather than only in cmd/settler's wiring.
+var _ LiveChannel = (*stellar.Channel)(nil)
+
+// exampleChannel is a stand-in for one deployed one-way-channel, used by
+// ExampleLiveChannel. It records what was settled so Withdrawn reflects
+// it, the way the real contract's withdrawn getter does.
+type exampleChannel struct {
+	address   string
+	withdrawn *big.Int
+}
+
+func (c *exampleChannel) Settle(_ context.Context, _ *keypair.Full, amount *big.Int, _ [64]byte) (string, error) {
+	c.withdrawn = new(big.Int).Set(amount)
+	return "tx-" + c.address[:4], nil
+}
+
+func (c *exampleChannel) Withdrawn(context.Context) (*big.Int, error) {
+	return new(big.Int).Set(c.withdrawn), nil
+}
+
+// ExampleLiveChannel shows how a caller supplies LiveChannel: never
+// directly, but through a ChannelFactory that returns a fresh binding per
+// channel address, because one-way-channel is deployed once per channel.
+// In cmd/settler the factory is a closure around stellar.NewChannel; here
+// it builds exampleChannel so the example runs without Soroban RPC.
+//
+// A caller implements both halves, since the daemon needs both for every
+// channel it watches: Settle to sweep against a commitment, and Withdrawn
+// to reconcile a settlement left in 'submitting' by a crash. The zero
+// value of the interface, nil, is not a usable channel — a factory must
+// always return a binding, never nil, or the daemon's first call on it
+// panics.
+func ExampleLiveChannel() {
+	var factory ChannelFactory = func(address string) LiveChannel {
+		return &exampleChannel{address: address, withdrawn: big.NewInt(0)}
+	}
+
+	ctx := context.Background()
+	live := factory(testChannel)
+
+	before, err := live.Withdrawn(ctx)
+	if err != nil {
+		fmt.Println("withdrawn:", err)
+		return
+	}
+	fmt.Println("withdrawn before:", before)
+
+	// Settle is cumulative: it sweeps up to the commitment's total, not
+	// an increment. The signer is passed through untouched; the real
+	// binding uses it to sign the transaction.
+	var sig [64]byte
+	hash, err := live.Settle(ctx, nil, big.NewInt(25_000_000), sig)
+	if err != nil {
+		fmt.Println("settle:", err)
+		return
+	}
+	fmt.Println("tx:", hash)
+
+	after, err := live.Withdrawn(ctx)
+	if err != nil {
+		fmt.Println("withdrawn:", err)
+		return
+	}
+	fmt.Println("withdrawn after:", after)
+	// Output:
+	// withdrawn before: 0
+	// tx: tx-CB2I
+	// withdrawn after: 25000000
 }
