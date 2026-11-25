@@ -152,6 +152,19 @@ func TestExposure_Age(t *testing.T) {
 	}
 }
 
+func ExampleExposure_Age() {
+	since := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
+	now := time.Date(2025, 1, 1, 12, 30, 0, 0, time.UTC)
+	exp := &Exposure{OldestUnsettledSince: &since}
+	fmt.Println(exp.Age(now))
+
+	empty := &Exposure{}
+	fmt.Println(empty.Age(now))
+	// Output:
+	// 2h30m0s
+	// 0s
+}
+
 // ExampleNewCalculator shows both halves of NewCalculator's contract.
 // NewCalculator itself never fails — it has no error return and stores pool
 // verbatim (see its doc comment) — so the rejection half only exists at the
@@ -187,4 +200,37 @@ func ExampleNewCalculator() {
 	// Output:
 	// accepted: true
 	// rejected: true
+}
+
+// ExampleCalculator_Calculate shows how the settler reads one channel's
+// exposure before deciding whether to sweep. Calculate only reads: the
+// channels row comes from the indexer and the commitments from custody, so
+// calling it never changes what gets settled. Only valid (verified)
+// commitments count, which keeps a commitment that failed prepare_commitment
+// out of the unsettled amount. A channel with no channels row comes back as
+// ErrChannelNotFound, matched with errors.Is.
+//
+// The pool is a zero-value stub and testChannel is the package's own test
+// channel. There is no // Output: line on purpose: Calculate's result
+// depends on the channels and commitments rows in Postgres, which an
+// example cannot set up without a live database. Without an Output line
+// `go test` compiles the example but does not run it, so the pool is never
+// dialed. It is here to pin the call shape: a signature change breaks the
+// build. The behaviour is covered by the TestCalculate_* tests above.
+func ExampleCalculator_Calculate() {
+	calc := NewCalculator(&pgxpool.Pool{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	exp, err := calc.Calculate(ctx, testChannel)
+	if errors.Is(err, ErrChannelNotFound) {
+		fmt.Println("channel not indexed yet:", testChannel)
+		return
+	}
+	if err != nil {
+		fmt.Println("calculate exposure:", err)
+		return
+	}
+	fmt.Println("unsettled:", exp.Unsettled, "age:", exp.Age(time.Now()))
 }

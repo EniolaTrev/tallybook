@@ -10,6 +10,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"github.com/stellar/go-stellar-sdk/keypair"
 )
 
 // TestBuildCommitment_MatchesIndependentDerivation checks BuildCommitment's
@@ -295,4 +298,285 @@ func simulateResultServer(t *testing.T, resultXDR string) *httptest.Server {
 	}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// ExampleChannel_Balance demonstrates how to query the current token balance
+// of a payment channel.
+//
+// There is deliberately no // Output: comment. Balance requires a live Soroban
+// RPC endpoint to simulate the read call on chain. Without an Output comment,
+// go test compiles this example to protect against signature drift without
+// executing it or opening a live network connection.
+func ExampleChannel_Balance() {
+	const (
+		contractID        = "CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW"
+		networkPassphrase = "Test SDF Network ; September 2015"
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	channel := NewChannel(NewClient("https://soroban-testnet.stellar.org", nil), contractID, networkPassphrase)
+	balance, err := channel.Balance(ctx)
+	if err != nil {
+		fmt.Println("balance:", err)
+		return
+	}
+	fmt.Println("channel balance:", balance)
+}
+
+// ExampleChannel_Close shows the call shape of Channel.Close: authorized by
+// the recipient, it closes the channel using a signed cumulative commitment,
+// withdrawing the unsettled difference to the recipient and attempting to
+// refund the funder.
+//
+// There is deliberately no // Output: comment. Close submits a transaction
+// to a live Soroban RPC endpoint and requires an active channel, a funded
+// recipient signer, and a valid funder signature. Without an Output comment,
+// go test compiles this example to protect against signature drift without
+// executing it or opening a live network connection.
+func ExampleChannel_Close() {
+	const (
+		contractID        = "CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW"
+		networkPassphrase = "Test SDF Network ; September 2015"
+	)
+	recipient, err := keypair.FromRawSeed([32]byte{1})
+	if err != nil {
+		fmt.Println("recipient key:", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	channel := NewChannel(NewClient("https://soroban-testnet.stellar.org", nil), contractID, networkPassphrase)
+	amount := big.NewInt(10_000)
+	var sig [64]byte
+
+	hash, err := channel.Close(ctx, recipient, amount, sig)
+	if err != nil {
+		fmt.Println("close:", err)
+		return
+	}
+	fmt.Println("close submitted:", hash)
+}
+
+// ExampleChannel_CloseStart shows the call shape of Channel.CloseStart: the
+// funder initiates closing the channel, which becomes effective after
+// RefundWaitingPeriod ledgers.
+//
+// There is deliberately no // Output: comment. CloseStart submits an on-chain
+// transaction via Soroban RPC and requires a live network, an active channel,
+// and a funded funder account. Without an Output comment, go test compiles
+// this example to protect against signature drift without executing it or
+// opening a live network connection.
+func ExampleChannel_CloseStart() {
+	const (
+		contractID        = "CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW"
+		networkPassphrase = "Test SDF Network ; September 2015"
+	)
+	funder, err := keypair.FromRawSeed([32]byte{1})
+	if err != nil {
+		fmt.Println("funder key:", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	channel := NewChannel(NewClient("https://soroban-testnet.stellar.org", nil), contractID, networkPassphrase)
+	hash, err := channel.CloseStart(ctx, funder)
+	if err != nil {
+		fmt.Println("close_start:", err)
+		return
+	}
+	fmt.Println("close_start submitted:", hash)
+}
+
+// ExampleChannel_Deposited demonstrates how to query the cumulative total
+// amount ever deposited into a payment channel.
+//
+// There is deliberately no // Output: comment. Deposited requires a live
+// Soroban RPC endpoint to simulate the read call on chain. Without an Output
+// comment, go test compiles this example to protect against signature drift
+// without executing it or opening a live network connection.
+func ExampleChannel_Deposited() {
+	const (
+		contractID        = "CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW"
+		networkPassphrase = "Test SDF Network ; September 2015"
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	channel := NewChannel(NewClient("https://soroban-testnet.stellar.org", nil), contractID, networkPassphrase)
+	deposited, err := channel.Deposited(ctx)
+	if err != nil {
+		fmt.Println("deposited:", err)
+		return
+	}
+	fmt.Println("total deposited:", deposited)
+}
+
+// ExampleChannel_From demonstrates how to query the funder's address of a
+// payment channel.
+//
+// There is deliberately no // Output: comment. From requires a live Soroban
+// RPC endpoint to simulate the read call on chain. Without an Output comment,
+// go test compiles this example to protect against signature drift without
+// executing it or opening a live network connection.
+func ExampleChannel_From() {
+	const (
+		contractID        = "CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW"
+		networkPassphrase = "Test SDF Network ; September 2015"
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	channel := NewChannel(NewClient("https://soroban-testnet.stellar.org", nil), contractID, networkPassphrase)
+	from, err := channel.From(ctx)
+	if err != nil {
+		fmt.Println("from:", err)
+		return
+	}
+	fmt.Println("channel funder:", from)
+}
+
+// ExampleChannel_RefundWaitingPeriod demonstrates how to query the number of
+// ledgers the funder must wait after close_start before calling refund.
+//
+// There is deliberately no // Output: comment. RefundWaitingPeriod requires a
+// live Soroban RPC endpoint to simulate the read call on chain. Without an
+// Output comment, go test compiles this example to protect against signature
+// drift without executing it or opening a live network connection.
+func ExampleChannel_RefundWaitingPeriod() {
+	const (
+		contractID        = "CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW"
+		networkPassphrase = "Test SDF Network ; September 2015"
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	channel := NewChannel(NewClient("https://soroban-testnet.stellar.org", nil), contractID, networkPassphrase)
+	period, err := channel.RefundWaitingPeriod(ctx)
+	if err != nil {
+		fmt.Println("refund_waiting_period:", err)
+		return
+	}
+	fmt.Println("refund waiting period (ledgers):", period)
+}
+
+// ExampleChannel_PrepareCommitment demonstrates how to obtain the exact bytes
+// the funder must sign to authorize a cumulative settlement amount. The
+// returned bytes are what the funder signs with ed25519 using the channel's
+// commitment_key; the recipient then presents the signature when calling
+// Settle or Close.
+//
+// There is deliberately no // Output: comment. PrepareCommitment requires a
+// live Soroban RPC endpoint to simulate the call on chain. Without an Output
+// comment, go test compiles this example to protect against signature drift
+// without executing it or opening a live network connection.
+func ExampleChannel_PrepareCommitment() {
+	const (
+		contractID        = "CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW"
+		networkPassphrase = "Test SDF Network ; September 2015"
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	channel := NewChannel(NewClient("https://soroban-testnet.stellar.org", nil), contractID, networkPassphrase)
+	amount := big.NewInt(10_000)
+	commitment, err := channel.PrepareCommitment(ctx, amount)
+	if err != nil {
+		fmt.Println("prepare_commitment:", err)
+		return
+	}
+	fmt.Println("commitment bytes to sign:", len(commitment))
+}
+
+// ExampleChannel_Refund demonstrates how to return the channel's entire
+// remaining balance to the funder once the close is effective (after
+// RefundWaitingPeriod ledgers). This is authorized by the funder and makes
+// every unsettled commitment worthless — the contract reserves nothing for
+// the recipient.
+//
+// There is deliberately no // Output: comment. Refund submits a transaction
+// to a live Soroban RPC endpoint and requires an active channel, a funded
+// funder signer, and that the close is effective. Without an Output comment,
+// go test compiles this example to protect against signature drift without
+// executing it or opening a live network connection.
+func ExampleChannel_Refund() {
+	const (
+		contractID        = "CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW"
+		networkPassphrase = "Test SDF Network ; September 2015"
+	)
+	funder, err := keypair.FromRawSeed([32]byte{1})
+	if err != nil {
+		fmt.Println("funder key:", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	channel := NewChannel(NewClient("https://soroban-testnet.stellar.org", nil), contractID, networkPassphrase)
+	hash, err := channel.Refund(ctx, funder)
+	if err != nil {
+		fmt.Println("refund:", err)
+		return
+	}
+	fmt.Println("refund submitted:", hash)
+}
+
+func ExampleChannel_Settle() {
+	const (
+		contractID        = "CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW"
+		networkPassphrase = "Test SDF Network ; September 2015"
+	)
+
+	recipient, err := keypair.FromRawSeed([32]byte{1})
+	if err != nil {
+		fmt.Println("recipient key:", err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Use a self-contained stub server that returns a minimal success
+	// JSON-RPC response for the settle call. This protects against
+	// signature drift without contacting a live network or opening a
+	// database connection.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Method string `json:"method"`
+		}
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &req)
+
+		w.Header().Set("Content-Type", "application/json")
+		switch req.Method {
+		case "settle":
+			// Minimal successful settlement response.
+			_minimalSettleResponse := `{"jsonrpc":"2.0","id":1,"result":{"status":"SUCCESS","hash":"abc123"}}`
+			_, _ = w.Write([]byte(_minimalSettleResponse))
+		default:
+			http.Error(w, "unexpected method "+req.Method, http.StatusInternalServerError)
+		}
+	}))
+	defer srv.Close()
+
+	channel := NewChannel(NewClient(srv.URL, nil), contractID, networkPassphrase)
+	amount := big.NewInt(10_000)
+	var sig [64]byte
+
+	hash, err := channel.Settle(ctx, recipient, amount, sig)
+	if err != nil {
+		fmt.Println("settle:", err)
+		return
+	}
+	fmt.Println("settle submitted:", hash)
 }

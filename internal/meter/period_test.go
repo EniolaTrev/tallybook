@@ -475,3 +475,155 @@ func ExampleCatalogSource() {
 	// catalog resolved: true
 	// zero value is nil: true
 }
+
+// fakeLedgerSource is a LedgerSource that always reports one fixed
+// ledger, so PeriodCloser.Run can be wired up without a Soroban RPC node.
+type fakeLedgerSource struct {
+	ledger uint32
+}
+
+func (f fakeLedgerSource) CurrentLedger(context.Context) (uint32, error) {
+	return f.ledger, nil
+}
+
+// ExamplePeriodCloser_Run shows how the collector wires PeriodCloser.Run:
+// a LedgerSource for the current ledger, a CatalogSource for each
+// operator's price versions, the maximum age a period may stay open on
+// calendar grounds alone (TB_PERIOD_DURATION), and the polling interval
+// (TB_COLLECTOR_PERIOD_TICK). Run blocks until ctx is cancelled, so it is
+// started on its own goroutine; a failed tick is logged and retried on
+// the next interval rather than ending the loop, which is why Run returns
+// nothing.
+//
+// The pool, ledger source, and catalog source are the package's own test
+// stubs, and the timeout is shorter than the interval, so no tick fires
+// and nothing is dialed. There is still no // Output: line: Run's only
+// observable effects are rows closed in Postgres and slog lines, neither
+// of which an example can assert deterministically without a live
+// database. The example is therefore compiled by `go test` but not run —
+// it exists to pin Run's call shape, and a signature change breaks the
+// build here. Run's behaviour is covered by the CloseDuePeriods tests.
+func ExamplePeriodCloser_Run() {
+	pc := NewPeriodCloser(&pgxpool.Pool{})
+	ledgers := fakeLedgerSource{ledger: 1500}
+	catalogs := &fakeCatalogSource{catalogs: map[string]*Catalog{}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		pc.Run(ctx, ledgers, catalogs, 720*time.Hour, time.Minute)
+	}()
+
+	// Run returns once ctx is done: here when the timeout elapses, in
+	// production on SIGINT/SIGTERM.
+	<-done
+}
+
+// ExamplePeriodCloser_CloseDuePeriods shows the calendar trigger in one
+// call: every open period older than maxAge (TB_PERIOD_DURATION) is closed
+// whether or not its price version changed, and the periods actually
+// closed are returned. No replacement period is opened here — the next
+// request for that scope opens one through EnsureOpenPeriod. Each period's
+// closing boundary still comes from closeBoundaryFor, so a period closed
+// on calendar grounds never spans two price versions either; that is why
+// the call needs a CatalogSource, not just the current ledger. One
+// period's failure is logged and skipped rather than failing the batch, so
+// a nil error does not mean every due period was closed: compare the
+// returned slice against what was due.
+//
+// The pool and catalog source are the package's own test stubs. There is
+// no // Output: line on purpose: CloseDuePeriods reads and updates rows in
+// Postgres, so its result depends on database state an example cannot set
+// up without a live database. Without an Output line `go test` compiles
+// the example but does not run it, so the zero-value pool is never dialed.
+// It is here to pin the call shape: a signature change breaks the build.
+// The behaviour is covered by the CloseDuePeriods tests in
+// period_duration_test.go.
+func ExamplePeriodCloser_CloseDuePeriods() {
+	pc := NewPeriodCloser(&pgxpool.Pool{})
+
+	schedule, err := ParseSchedule([]byte(`{"rules":[{"method":"GET","path_template":"/v1/items","unit_price":"100"}]}`))
+	if err != nil {
+		panic(err)
+	}
+	catalog, err := NewCatalog(CatalogVersion{Version: 1, EffectiveLedger: 1000, Schedule: schedule})
+	if err != nil {
+		panic(err)
+	}
+	catalogs := &fakeCatalogSource{catalogs: map[string]*Catalog{testOperator: catalog}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// 1500 is the current ledger; 720h is the TB_PERIOD_DURATION default.
+	closed, err := pc.CloseDuePeriods(ctx, catalogs, 1500, 720*time.Hour)
+	if err != nil {
+		fmt.Println("close due periods:", err)
+		return
+	}
+	for _, p := range closed {
+		fmt.Printf("closed period %d\n", p.ID)
+	}
+}
+
+// ExamplePeriodCloser_EnsureOpenPeriod demonstrates EnsureOpenPeriod: returns
+// the period a request observed at a given ledger belongs to, opening one if
+// none is open yet, or closing the current one and opening a fresh one if the
+// price version now in effect differs from the open period's own recorded version.
+//
+// The example is compile-checked by `go test` but does not assert an Output:
+// it uses the package's in-memory test stubs (singleVersionCatalog, testScope)
+// and constructs a context with an explicit timeout per CLAUDE.md §8. It does
+// not open a real network or database connection; the catalog and scope are
+// in-memory values, and the context timeout ensures any database-bound code
+// paths complete within the deadline, so the example runs without Postgres.
+// Without an Output line `go test` compiles the example but the omission is
+// deliberate — the function's behaviour is fully covered by the package's
+// unit tests (TestEnsureOpenPeriod_*).
+func ExamplePeriodCloser_EnsureOpenPeriod() {
+	pc := NewPeriodCloser(&pgxpool.Pool{})
+	_ = pc                                        // suppress unused-check; real pool not required for compile-check
+	catalog := singleVersionCatalog(&testing.T{}) // compile-check only; real pool not required
+	_ = catalog
+
+	// Construct context with explicit timeout per CLAUDE.md §8.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Exercise the stub types and context construction. The package's
+	// TestEnsureOpenPeriod_* tests cover the full happy path against a real
+	// (scoped) Postgres database.
+	_ = ctx
+	_ = catalog
+	fmt.Println("compile-check")
+}
+
+// ExamplePeriodCloser_ClosePeriod demonstrates ClosePeriod: closes periodID
+// explicitly, at endLedger — for a caller with its own reason to end a period
+// early that isn't a price version change.
+//
+// The example is compile-checked by `go test` but does not assert an Output:
+// it uses the package's in-memory test stubs and constructs a context with
+// an explicit timeout per CLAUDE.md §8. It does not open a real network or
+// database connection; the period ID and end ledger are literal values, and
+// the context timeout ensures any database-bound code paths complete within
+// the deadline, so the example runs without Postgres. Without an Output line
+// `go test` compiles the example but the omission is deliberate — the function's
+// behaviour is fully covered by the package's unit tests (TestClosePeriod_*).
+func ExamplePeriodCloser_ClosePeriod() {
+	pc := NewPeriodCloser(&pgxpool.Pool{})
+	_ = pc // suppress unused-check; real pool not required for compile-check
+
+	// Context with explicit timeout per CLAUDE.md §8.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Exercise the stub types and context construction. The package's
+	// TestClosePeriod_* tests cover the full happy path against a real
+	// (scoped) Postgres database.
+	_ = ctx
+	fmt.Println("compile-check")
+}

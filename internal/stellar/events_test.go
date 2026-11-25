@@ -40,6 +40,23 @@ func loadEventFixture(t testing.TB, name string) []rawEvent {
 	return doc.Result.Events
 }
 
+func ExampleDecodePriceBookPublishEvent() {
+	// A genuine ("price_book", "publish") event's Value, captured live
+	// from testnet (tx f3228c2dc7597914, fixture events_pricebook_publish).
+	const publishValueB64 = "AAAAEAAAAAEAAAAEAAAAEgAAAAAAAAAAaSue9e7ifQ7u45Obpx8FFiCUrvDOYAF+ur/wm7XTZE0AAAADAAAAAQAAAA0AAAAgGj9XZu1r/5QDu00mLYMf1MIGS8sVIkTZkWu5E6NGEuAAAAADAEZgRQ=="
+	ev, err := DecodePriceBookPublishEvent(publishValueB64)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("operator:", ev.Operator)
+	fmt.Println("version:", ev.Version)
+	fmt.Println("effective_ledger:", ev.EffectiveLedger)
+	// Output:
+	// operator: GBUSXHXV53RH2DXO4OJZXJY7AULCBFFO6DHGAAL6XK77BG5V2NSE253A
+	// version: 1
+	// effective_ledger: 4612165
+}
+
 func TestMatchesTopic(t *testing.T) {
 	events := loadEventFixture(t, "events_pricebook_publish")
 	ok, err := MatchesTopic(events[0].Topic, TopicPriceBook, TopicPublish)
@@ -76,80 +93,70 @@ func ExampleMatchesTopic() {
 	// Output: true
 }
 
-func ExampleChannelRefundEvent() {
-	from := "GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX"
-	fromVal, err := ScvAddress(from)
+func ExampleDecodeStatementAnchorEvent() {
+	// A genuine ("statement", "anchor") event's Value, captured live
+	// from testnet (tx 24ae654ce0eee96e, fixture events_statement_registry).
+	const anchorValueB64 = "AAAAEAAAAAEAAAAHAAAAEgAAAAAAAAAAaSue9e7ifQ7u45Obpx8FFiCUrvDOYAF+ur/wm7XTZE0AAAASAAAAAAAAAACtXWITvZ/9QnTuL9KzW/xEfHokr4K/TUEhRQ7HUBTv7wAAAAUAAAAAAAAAAgAAAA0AAAAggaEkUz5nXjZ3AZgrgejf1gyEi/t9Axkzv7xLL7BNQiUAAAAKAAAAAAAAAAAAAAAAAAAH0AAAAAoAAAAAAAAAAAAAAAAAAAfQAAAAEAAAAAEAAAABAAAADwAAAARYNDAy"
+	ev, err := DecodeStatementAnchorEvent(anchorValueB64)
 	if err != nil {
-		log.Fatal(err)
+		panic(err)
 	}
-	amountVal, err := ScvI128(big.NewInt(9999))
-	if err != nil {
-		log.Fatal(err)
-	}
-	valueB64, err := MarshalScValBase64(ScvVec([]xdr.ScVal{
-		fromVal,
-		amountVal,
-	}))
-	if err != nil {
-		log.Fatal(err)
-	}
-	ev, err := DecodeChannelRefundEvent(valueB64)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("From=%s Amount=%d\n", ev.From, ev.Amount)
-	// Output: From=GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX Amount=9999
+	fmt.Println("operator:", ev.Operator)
+	fmt.Println("consumer:", ev.Consumer)
+	fmt.Println("seq:", ev.Seq)
+	fmt.Printf("usage_root: %x\n", ev.UsageRoot)
+	fmt.Println("amount_billed:", ev.AmountBilled)
+	fmt.Println("amount_settled:", ev.AmountSettled)
+	fmt.Println("protocol:", ev.Protocol)
+	// Output:
+	// operator: GBUSXHXV53RH2DXO4OJZXJY7AULCBFFO6DHGAAL6XK77BG5V2NSE253A
+	// consumer: GCWV2YQTXWP72QTU5YX5FM237RCHY6REV6BL6TKBEFCQ5R2QCTX67VUG
+	// seq: 2
+	// usage_root: 81a124533e675e367701982b81e8dfd60c848bfb7d031933bfbc4b2fb04d4225
+	// amount_billed: 2000
+	// amount_settled: 2000
+	// protocol: X402
 }
 
-func ExampleChannelOpenEvent() {
-	from := "GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX"
-	to := "GCWV2YQTXWP72QTU5YX5FM237RCHY6REV6BL6TKBEFCQ5R2QCTX67VUG"
-	token := "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
-	var commitmentKey [32]byte
-	for i := range commitmentKey {
-		commitmentKey[i] = byte(i)
-	}
-	fromVal, err := ScvAddress(from)
+func ExampleDecodeStatementDisputeEvent() {
+	// A genuine ("statement", "dispute") event's Value, captured live
+	// from testnet (tx ecbafcd85fc10381, fixture events_statement_registry).
+	const disputeValueB64 = "AAAAEAAAAAEAAAAEAAAAEgAAAAAAAAAAaSue9e7ifQ7u45Obpx8FFiCUrvDOYAF+ur/wm7XTZE0AAAASAAAAAAAAAACtXWITvZ/9QnTuL9KzW/xEfHokr4K/TUEhRQ7HUBTv7wAAAAUAAAAAAAAAAgAAAA0AAAAgef6xLgsPk8jiZXvgRxL+ABu7LhG/XfXOXz5vKemhjoU="
+	ev, err := DecodeStatementDisputeEvent(disputeValueB64)
 	if err != nil {
-		log.Fatal(err)
+		panic(err)
 	}
-	toVal, err := ScvAddress(to)
-	if err != nil {
-		log.Fatal(err)
-	}
-	tokenVal, err := ScvAddress(token)
-	if err != nil {
-		log.Fatal(err)
-	}
-	amountVal, err := ScvI128(big.NewInt(500))
-	if err != nil {
-		log.Fatal(err)
-	}
-	valueB64, err := MarshalScValBase64(ScvVec([]xdr.ScVal{
-		fromVal, ScvBytes(commitmentKey[:]), toVal, tokenVal, amountVal, ScvU32(20),
-	}))
-	if err != nil {
-		log.Fatal(err)
-	}
-	ev, err := DecodeChannelOpenEvent(valueB64)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("From=%s To=%s Token=%s Amount=%d RefundWaitingPeriod=%d\n", ev.From, ev.To, ev.Token, ev.Amount, ev.RefundWaitingPeriod)
-	// Output: From=GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX To=GCWV2YQTXWP72QTU5YX5FM237RCHY6REV6BL6TKBEFCQ5R2QCTX67VUG Token=CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC Amount=500 RefundWaitingPeriod=20
+	fmt.Println("operator:", ev.Operator)
+	fmt.Println("consumer:", ev.Consumer)
+	fmt.Println("seq:", ev.Seq)
+	fmt.Printf("reason_hash: %x\n", ev.ReasonHash)
+	// Output:
+	// operator: GBUSXHXV53RH2DXO4OJZXJY7AULCBFFO6DHGAAL6XK77BG5V2NSE253A
+	// consumer: GCWV2YQTXWP72QTU5YX5FM237RCHY6REV6BL6TKBEFCQ5R2QCTX67VUG
+	// seq: 2
+	// reason_hash: 79feb12e0b0f93c8e2657be04712fe001bbb2e11bf5df5ce5f3e6f29e9a18e85
 }
 
-func ExampleChannelCloseEvent() {
-	valueB64, err := MarshalScValBase64(ScvVec([]xdr.ScVal{ScvU32(4700123)}))
+func ExampleDecodeStatementResolveEvent() {
+	// A genuine ("statement", "resolve") event's Value, captured live
+	// from testnet (seq 2 of the anchor→dispute→resolve cycle in
+	// testdata/stellar/events_statement_registry.json).
+	const resolveValueB64 = "AAAAEAAAAAEAAAAFAAAAEgAAAAAAAAAAaSue9e7ifQ7u45Obpx8FFiCUrvDOYAF+ur/wm7XTZE0AAAASAAAAAAAAAACtXWITvZ/9QnTuL9KzW/xEfHokr4K/TUEhRQ7HUBTv7wAAAAUAAAAAAAAAAgAAAA0AAAAg8A5inGgIkyd6LJ6/kc4nFZgaYZYrhltAbEs9w+7SQiwAAAAKAAAAAAAAAAAAAAAAAAAAyA=="
+	ev, err := DecodeStatementResolveEvent(resolveValueB64)
 	if err != nil {
-		log.Fatal(err)
+		panic(err)
 	}
-	ev, err := DecodeChannelCloseEvent(valueB64)
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("EffectiveAtLedger=%d\n", ev.EffectiveAtLedger)
-	// Output: EffectiveAtLedger=4700123
+	fmt.Println("operator:", ev.Operator)
+	fmt.Println("consumer:", ev.Consumer)
+	fmt.Println("seq:", ev.Seq)
+	fmt.Printf("resolution_hash: %x\n", ev.ResolutionHash)
+	fmt.Println("amount_credited:", ev.AmountCredited)
+	// Output:
+	// operator: GBUSXHXV53RH2DXO4OJZXJY7AULCBFFO6DHGAAL6XK77BG5V2NSE253A
+	// consumer: GCWV2YQTXWP72QTU5YX5FM237RCHY6REV6BL6TKBEFCQ5R2QCTX67VUG
+	// seq: 2
+	// resolution_hash: f00e629c680893277a2c9ebf91ce2715981a61962b865b406c4b3dc3eed2422c
+	// amount_credited: 200
 }
 
 // TestDecodePriceBookPublishEvent_AgainstRealEvents decodes two genuine
@@ -346,6 +353,20 @@ func TestDecodeChannelOpenEvent_RoundTrip(t *testing.T) {
 	}
 }
 
+func ExampleDecodeChannelCloseEvent() {
+	valueB64, err := MarshalScValBase64(ScvVec([]xdr.ScVal{ScvU32(4700123)}))
+	if err != nil {
+		log.Fatal(err)
+	}
+	ev, err := DecodeChannelCloseEvent(valueB64)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(ev.EffectiveAtLedger)
+	// Output:
+	// 4700123
+}
+
 func TestDecodeChannelCloseEvent_RoundTrip(t *testing.T) {
 	valueB64, err := MarshalScValBase64(ScvVec([]xdr.ScVal{ScvU32(4700123)}))
 	if err != nil {
@@ -417,6 +438,33 @@ func TestDecodeChannelWithdrawEvent_LiveEvent(t *testing.T) {
 	}
 }
 
+func ExampleDecodeChannelWithdrawEvent() {
+	// A two-field Withdraw event (to, amount) built with the XDR helpers.
+	to := "GCWV2YQTXWP72QTU5YX5FM237RCHY6REV6BL6TKBEFCQ5R2QCTX67VUG"
+	toVal, err := ScvAddress(to)
+	if err != nil {
+		panic(err)
+	}
+	amountVal, err := ScvI128(big.NewInt(5_000_000))
+	if err != nil {
+		panic(err)
+	}
+	valueB64, err := MarshalScValBase64(ScvVec([]xdr.ScVal{toVal, amountVal}))
+	if err != nil {
+		panic(err)
+	}
+
+	ev, err := DecodeChannelWithdrawEvent(valueB64)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("to:", ev.To)
+	fmt.Println("amount:", ev.Amount)
+	// Output:
+	// to: GCWV2YQTXWP72QTU5YX5FM237RCHY6REV6BL6TKBEFCQ5R2QCTX67VUG
+	// amount: 5000000
+}
+
 func TestDecodeChannelRefundEvent_RoundTrip(t *testing.T) {
 	from := "GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX"
 	fromVal, err := ScvAddress(from)
@@ -442,6 +490,45 @@ func TestDecodeChannelRefundEvent_RoundTrip(t *testing.T) {
 	if ev.Amount.Cmp(big.NewInt(9999)) != 0 {
 		t.Errorf("Amount = %s, want 9999", ev.Amount)
 	}
+}
+
+func ExampleDecodeChannelOpenEvent() {
+	// A synthetically constructed one-way-channel Open event: from,
+	// commitment_key, to, token, amount, refund_waiting_period — in the
+	// field order event.rs declares.
+	const openValueB64 = "AAAAEAAAAAEAAAAGAAAAEgAAAAAAAAAAAAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8AAAANAAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4fAAAAEgAAAAAAAAAArV1iE72f/UJ07i/Ss1v8RHx6JK+Cv01BIUUOx1AU7+8AAAASAAAAAdeSi3LCcDzP6vfrn/TvTVBKVai5efybRQ6iyEK00c5hAAAACgAAAAAAAAAAAAAAAAAAAfQAAAADAAAAFA=="
+	ev, err := DecodeChannelOpenEvent(openValueB64)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("from:", ev.From)
+	fmt.Printf("commitment_key: %x\n", ev.CommitmentKey)
+	fmt.Println("to:", ev.To)
+	fmt.Println("token:", ev.Token)
+	fmt.Println("amount:", ev.Amount)
+	fmt.Println("refund_waiting_period:", ev.RefundWaitingPeriod)
+	// Output:
+	// from: GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX
+	// commitment_key: 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+	// to: GCWV2YQTXWP72QTU5YX5FM237RCHY6REV6BL6TKBEFCQ5R2QCTX67VUG
+	// token: CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC
+	// amount: 500
+	// refund_waiting_period: 20
+}
+
+func ExampleDecodeChannelRefundEvent() {
+	// A synthetically constructed one-way-channel Refund event: from and
+	// the entire remaining balance returned to the payer (§1).
+	const refundValueB64 = "AAAAEAAAAAEAAAACAAAAEgAAAAAAAAAAAAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8AAAAKAAAAAAAAAAAAAAAAAAAnDw=="
+	ev, err := DecodeChannelRefundEvent(refundValueB64)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println("from:", ev.From)
+	fmt.Println("amount:", ev.Amount)
+	// Output:
+	// from: GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX
+	// amount: 9999
 }
 
 func TestDecodeEventFields_RejectsWrongLength(t *testing.T) {
@@ -538,4 +625,135 @@ func FuzzDecodeEvents(f *testing.F) {
 			}
 		}
 	})
+}
+
+// ExampleStatementAnchorEvent compares an anchor event with the statement
+// the caller anchored. A caller never builds a StatementAnchorEvent to
+// send: the contract emits one, and DecodeStatementAnchorEvent fills it in
+// from EventInfo.Value. The literal below is what a caller (a reconciler,
+// for example) writes to say which anchor it expects to see. Every field
+// comes from the Anchor call, except Seq, which the contract assigns and
+// Anchor returns. The event has only seven of Statement's fields, so it
+// confirms which statement was anchored; GetStatement gives the full record.
+// The zero value's nil amounts mean "not decoded", not zero.
+func ExampleStatementAnchorEvent() {
+	var zero StatementAnchorEvent
+	fmt.Printf("zero value: seq=%d billed=%v protocol=%q\n", zero.Seq, zero.AmountBilled, zero.Protocol)
+
+	var usageRoot [32]byte
+	if _, err := hex.Decode(usageRoot[:], []byte("81a124533e675e367701982b81e8dfd60c848bfb7d031933bfbc4b2fb04d4225")); err != nil {
+		log.Fatal(err)
+	}
+	want := StatementAnchorEvent{
+		Operator:      "GBUSXHXV53RH2DXO4OJZXJY7AULCBFFO6DHGAAL6XK77BG5V2NSE253A",
+		Consumer:      "GCWV2YQTXWP72QTU5YX5FM237RCHY6REV6BL6TKBEFCQ5R2QCTX67VUG",
+		Seq:           2, // returned by Anchor
+		UsageRoot:     usageRoot,
+		AmountBilled:  big.NewInt(2000),
+		AmountSettled: big.NewInt(2000),
+		Protocol:      ProtocolX402,
+	}
+
+	// A genuine ("statement", "anchor") event's Value, captured live from
+	// testnet (fixture events_statement_registry).
+	const anchorValueB64 = "AAAAEAAAAAEAAAAHAAAAEgAAAAAAAAAAaSue9e7ifQ7u45Obpx8FFiCUrvDOYAF+ur/wm7XTZE0AAAASAAAAAAAAAACtXWITvZ/9QnTuL9KzW/xEfHokr4K/TUEhRQ7HUBTv7wAAAAUAAAAAAAAAAgAAAA0AAAAggaEkUz5nXjZ3AZgrgejf1gyEi/t9Axkzv7xLL7BNQiUAAAAKAAAAAAAAAAAAAAAAAAAH0AAAAAoAAAAAAAAAAAAAAAAAAAfQAAAAEAAAAAEAAAABAAAADwAAAARYNDAy"
+	got, err := DecodeStatementAnchorEvent(anchorValueB64)
+	if err != nil {
+		log.Fatal(err)
+	}
+	matches := got.Operator == want.Operator &&
+		got.Consumer == want.Consumer &&
+		got.Seq == want.Seq &&
+		got.UsageRoot == want.UsageRoot &&
+		got.AmountBilled.Cmp(want.AmountBilled) == 0 &&
+		got.AmountSettled.Cmp(want.AmountSettled) == 0 &&
+		got.Protocol == want.Protocol
+	fmt.Println("event matches anchored statement:", matches)
+
+	// Output:
+	// zero value: seq=0 billed=<nil> protocol=""
+	// event matches anchored statement: true
+}
+
+// ExampleStatementDisputeEvent compares a dispute event with the dispute
+// the caller opened. A caller never builds a StatementDisputeEvent to send:
+// the contract emits one, and DecodeStatementDisputeEvent fills it in from
+// EventInfo.Value. The literal below is what a caller (a reconciler, for
+// example) writes to say which dispute it expects to see. Every field comes
+// from the OpenDispute call: Consumer is the signer's address, and
+// Operator, Seq and ReasonHash are its arguments, naming the statement
+// being disputed. The zero value's all-zero ReasonHash means "not decoded",
+// not a real reason hash.
+func ExampleStatementDisputeEvent() {
+	var zero StatementDisputeEvent
+	fmt.Printf("zero value: seq=%d consumer=%q reason_hash_set=%t\n", zero.Seq, zero.Consumer, zero.ReasonHash != [32]byte{})
+
+	var reasonHash [32]byte
+	if _, err := hex.Decode(reasonHash[:], []byte("79feb12e0b0f93c8e2657be04712fe001bbb2e11bf5df5ce5f3e6f29e9a18e85")); err != nil {
+		log.Fatal(err)
+	}
+	want := StatementDisputeEvent{
+		Operator:   "GBUSXHXV53RH2DXO4OJZXJY7AULCBFFO6DHGAAL6XK77BG5V2NSE253A", // OpenDispute's operator argument
+		Consumer:   "GCWV2YQTXWP72QTU5YX5FM237RCHY6REV6BL6TKBEFCQ5R2QCTX67VUG", // OpenDispute's signer
+		Seq:        2,
+		ReasonHash: reasonHash,
+	}
+
+	// A genuine ("statement", "dispute") event's Value, captured live from
+	// testnet (fixture events_statement_registry).
+	const disputeValueB64 = "AAAAEAAAAAEAAAAEAAAAEgAAAAAAAAAAaSue9e7ifQ7u45Obpx8FFiCUrvDOYAF+ur/wm7XTZE0AAAASAAAAAAAAAACtXWITvZ/9QnTuL9KzW/xEfHokr4K/TUEhRQ7HUBTv7wAAAAUAAAAAAAAAAgAAAA0AAAAgef6xLgsPk8jiZXvgRxL+ABu7LhG/XfXOXz5vKemhjoU="
+	got, err := DecodeStatementDisputeEvent(disputeValueB64)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("event matches opened dispute:", *got == want)
+
+	// Output:
+	// zero value: seq=0 consumer="" reason_hash_set=false
+	// event matches opened dispute: true
+}
+
+// ExampleStatementResolveEvent compares a resolve event with the resolution
+// the caller submitted. A caller never builds a StatementResolveEvent to
+// send: the contract emits one, and DecodeStatementResolveEvent fills it in
+// from EventInfo.Value. Operator is ResolveDispute's signer, and Seq,
+// ResolutionHash and AmountCredited are its arguments. Consumer is not a
+// ResolveDispute argument: the contract fills it in from the disputed
+// statement, so the caller takes it from that statement (or its dispute
+// event). The zero value's nil AmountCredited means "not decoded", not a
+// zero credit — compare with Cmp only after decoding.
+func ExampleStatementResolveEvent() {
+	var zero StatementResolveEvent
+	fmt.Printf("zero value: seq=%d credited=%v\n", zero.Seq, zero.AmountCredited)
+
+	var resolutionHash [32]byte
+	if _, err := hex.Decode(resolutionHash[:], []byte("f00e629c680893277a2c9ebf91ce2715981a61962b865b406c4b3dc3eed2422c")); err != nil {
+		log.Fatal(err)
+	}
+	want := StatementResolveEvent{
+		Operator:       "GBUSXHXV53RH2DXO4OJZXJY7AULCBFFO6DHGAAL6XK77BG5V2NSE253A", // ResolveDispute's signer
+		Consumer:       "GCWV2YQTXWP72QTU5YX5FM237RCHY6REV6BL6TKBEFCQ5R2QCTX67VUG", // from the disputed statement
+		Seq:            2,
+		ResolutionHash: resolutionHash,
+		AmountCredited: big.NewInt(200),
+	}
+
+	// A genuine ("statement", "resolve") event's Value, captured live from
+	// testnet (seq 2 of the anchor→dispute→resolve cycle in
+	// testdata/stellar/events_statement_registry.json).
+	const resolveValueB64 = "AAAAEAAAAAEAAAAFAAAAEgAAAAAAAAAAaSue9e7ifQ7u45Obpx8FFiCUrvDOYAF+ur/wm7XTZE0AAAASAAAAAAAAAACtXWITvZ/9QnTuL9KzW/xEfHokr4K/TUEhRQ7HUBTv7wAAAAUAAAAAAAAAAgAAAA0AAAAg8A5inGgIkyd6LJ6/kc4nFZgaYZYrhltAbEs9w+7SQiwAAAAKAAAAAAAAAAAAAAAAAAAAyA=="
+	got, err := DecodeStatementResolveEvent(resolveValueB64)
+	if err != nil {
+		log.Fatal(err)
+	}
+	matches := got.Operator == want.Operator &&
+		got.Consumer == want.Consumer &&
+		got.Seq == want.Seq &&
+		got.ResolutionHash == want.ResolutionHash &&
+		got.AmountCredited.Cmp(want.AmountCredited) == 0
+	fmt.Println("event matches submitted resolution:", matches)
+
+	// Output:
+	// zero value: seq=0 credited=<nil>
+	// event matches submitted resolution: true
 }

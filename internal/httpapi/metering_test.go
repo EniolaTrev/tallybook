@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 // ExampleRecorder shows how a caller actually obtains and uses a Recorder.
@@ -21,11 +22,12 @@ import (
 // silently recording nothing, which is the difference visible below.
 //
 // The caller sets only the fields it owns: the Config wiring (Operator,
-// Method, PathTemplate, Pricer, Ledger, Recorder) and the request's
-// RequestInfo. UnitCount is left unset so the package's default (one unit
-// per request) fills it in, and every field of the RecordedRequest —
-// request ID, endpoint hash, price version, charged amount, observed
-// ledger — is filled in by the middleware, never by the caller.
+// Method, PathTemplate, Catalogs, Ledger, Recorder, Periods) and the
+// request's RequestInfo. UnitCount is left unset so the package's
+// default (one unit per request) fills it in, and every field of the
+// RecordedRequest — request ID, endpoint hash, price version, charged
+// amount, observed ledger, period — is filled in by the middleware,
+// never by the caller.
 func ExampleRecorder() {
 	// The wiring a caller is required to set, per Config.validate —
 	// everything except the Recorder, which comes last so the zero-value
@@ -44,8 +46,9 @@ func ExampleRecorder() {
 		Operator:     "GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM",
 		Method:       "GET",
 		PathTemplate: "/v1/items",
-		Pricer:       meter.NewPricer(catalog),
+		Catalogs:     fakeCatalogs{catalog: catalog},
 		Ledger:       fakeLedgerSource{ledger: 1500},
+		Periods:      fakePeriods{period: &meter.Period{ID: 7}},
 	}
 
 	// The zero value: no implementation to record with, so wiring fails
@@ -86,6 +89,7 @@ func ExampleRecorder() {
 	fmt.Println("charged amount:", got.ChargedAmount)
 	fmt.Println("protocol:", got.Protocol)
 	fmt.Println("observed ledger:", got.ObservedLedger)
+	fmt.Println("period:", got.PeriodID)
 	fmt.Println("request id set:", got.RequestID != [32]byte{})
 
 	// Output:
@@ -100,6 +104,7 @@ func ExampleRecorder() {
 	// charged amount: 1000
 	// protocol: x402
 	// observed ledger: 1500
+	// period: 7
 	// request id set: true
 }
 
@@ -115,6 +120,52 @@ func (f fakeLedgerSource) CurrentLedger(context.Context) (uint32, error) {
 	return f.ledger, nil
 }
 
+// fakeCatalogs is a CatalogSource that always hands back one catalog —
+// or one error, for the failure paths.
+type fakeCatalogs struct {
+	catalog *meter.Catalog
+	err     error
+}
+
+func (f fakeCatalogs) CatalogFor(context.Context, string) (*meter.Catalog, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.catalog, nil
+}
+
+// fakePeriods is a PeriodOpener that always hands back one period — or
+// one error, for the failure paths.
+type fakePeriods struct {
+	period *meter.Period
+	err    error
+}
+
+func (f fakePeriods) EnsureOpenPeriod(context.Context, meter.Scope, uint32, *meter.Catalog) (*meter.Period, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.period, nil
+}
+
+// recordingPeriods is the same idea, but a pointer receiver, so the
+// scope it was called with survives the call.
+type recordingPeriods struct {
+	period *meter.Period
+	err    error
+	scope  meter.Scope
+	ledger uint32
+}
+
+func (f *recordingPeriods) EnsureOpenPeriod(_ context.Context, scope meter.Scope, ledger uint32, _ *meter.Catalog) (*meter.Period, error) {
+	f.scope = scope
+	f.ledger = ledger
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.period, nil
+}
+
 type fakeRecorder struct {
 	recorded []RecordedRequest
 	err      error
@@ -128,7 +179,7 @@ func (f *fakeRecorder) RecordRequest(_ context.Context, req RecordedRequest) err
 	return nil
 }
 
-func mustPricer(t testing.TB, unitPrice string) *meter.Pricer {
+func mustCatalog(t testing.TB, unitPrice string) *meter.Catalog {
 	t.Helper()
 	sched, err := meter.ParseSchedule([]byte(`{"rules":[{"method":"GET","path_template":"/v1/items","unit_price":"` + unitPrice + `"}]}`))
 	if err != nil {
@@ -138,7 +189,7 @@ func mustPricer(t testing.TB, unitPrice string) *meter.Pricer {
 	if err != nil {
 		t.Fatalf("NewCatalog returned unexpected error: %v", err)
 	}
-	return meter.NewPricer(catalog)
+	return catalog
 }
 
 func baseConfig(t *testing.T, ledger LedgerSource, recorder Recorder) Config {
@@ -147,9 +198,10 @@ func baseConfig(t *testing.T, ledger LedgerSource, recorder Recorder) Config {
 		Operator:     "GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM",
 		Method:       "GET",
 		PathTemplate: "/v1/items",
-		Pricer:       mustPricer(t, "1000"),
+		Catalogs:     fakeCatalogs{catalog: mustCatalog(t, "1000")},
 		Ledger:       ledger,
 		Recorder:     recorder,
+		Periods:      fakePeriods{period: &meter.Period{ID: 42}},
 	}
 }
 
@@ -213,6 +265,9 @@ func TestMiddleware_RecordsAndCallsNext(t *testing.T) {
 	if got.ObservedLedger != 1500 {
 		t.Errorf("ObservedLedger = %d, want 1500", got.ObservedLedger)
 	}
+	if got.PeriodID != 42 {
+		t.Errorf("PeriodID = %d, want 42", got.PeriodID)
+	}
 	if got.RequestID == ([32]byte{}) {
 		t.Error("RequestID is all zeros, want a random value")
 	}
@@ -244,6 +299,59 @@ func TestMiddleware_MissingRequestInfoFailsClosed(t *testing.T) {
 	}
 }
 
+// TestMiddleware_OpensThePeriodTheRequestBelongsTo covers the billing
+// side of metering: every request is filed under a period, and the
+// period is the one for the request's own scope — operator, consumer,
+// protocol and channel — so two consumers never share a period and an
+// mpp_session request is not filed under a charge-mode period.
+func TestMiddleware_OpensThePeriodTheRequestBelongsTo(t *testing.T) {
+	tests := []struct {
+		name string
+		info RequestInfo
+	}{
+		{"x402", RequestInfo{Consumer: "GABC", Protocol: ProtocolX402}},
+		{"mpp_charge", RequestInfo{Consumer: "GABC", Protocol: ProtocolMPPCharge}},
+		{"mpp_session", RequestInfo{Consumer: "GABC", Protocol: ProtocolMPPSession, Channel: "CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := &fakeRecorder{}
+			periods := &recordingPeriods{period: &meter.Period{ID: 99}}
+			cfg := baseConfig(t, fakeLedgerSource{ledger: 1500}, recorder)
+			cfg.Periods = periods
+
+			mw, err := Middleware(cfg)
+			if err != nil {
+				t.Fatalf("Middleware returned unexpected error: %v", err)
+			}
+			next := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+
+			req := httptest.NewRequest("GET", "/v1/items", nil)
+			req = req.WithContext(WithRequestInfo(req.Context(), tt.info))
+			mw(next).ServeHTTP(httptest.NewRecorder(), req)
+
+			want := meter.Scope{
+				Operator: cfg.Operator,
+				Consumer: tt.info.Consumer,
+				Protocol: tt.info.Protocol,
+				Channel:  tt.info.Channel,
+			}
+			if periods.scope != want {
+				t.Errorf("scope = %+v, want %+v", periods.scope, want)
+			}
+			if periods.ledger != 1500 {
+				t.Errorf("ledger = %d, want 1500", periods.ledger)
+			}
+			if len(recorder.recorded) != 1 {
+				t.Fatalf("recorded %d requests, want 1", len(recorder.recorded))
+			}
+			if got := recorder.recorded[0].PeriodID; got != 99 {
+				t.Errorf("PeriodID = %d, want 99", got)
+			}
+		})
+	}
+}
+
 func TestConfig_Validate(t *testing.T) {
 	valid := baseConfig(t, fakeLedgerSource{ledger: 1500}, &fakeRecorder{})
 
@@ -254,9 +362,10 @@ func TestConfig_Validate(t *testing.T) {
 		{"empty operator", func(c *Config) { c.Operator = "" }},
 		{"empty method", func(c *Config) { c.Method = "" }},
 		{"empty path template", func(c *Config) { c.PathTemplate = "" }},
-		{"nil pricer", func(c *Config) { c.Pricer = nil }},
+		{"nil catalog source", func(c *Config) { c.Catalogs = nil }},
 		{"nil ledger source", func(c *Config) { c.Ledger = nil }},
 		{"nil recorder", func(c *Config) { c.Recorder = nil }},
+		{"nil period opener", func(c *Config) { c.Periods = nil }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -280,6 +389,10 @@ func TestConfig_Validate(t *testing.T) {
 var errLedgerUnavailable = errors.New("rpc: ledger unavailable")
 
 var errRecordFailed = errors.New("store: connection refused")
+
+var errCatalogUnavailable = errors.New("price book unavailable")
+
+var errPeriodUnavailable = errors.New("database: cannot open period")
 
 func TestMiddleware_FailureSourcesAllFailClosed(t *testing.T) {
 	tests := []struct {
@@ -311,10 +424,38 @@ func TestMiddleware_FailureSourcesAllFailClosed(t *testing.T) {
 			wantCode: http.StatusInternalServerError,
 		},
 		{
-			name: "pricer error (unpriced endpoint)",
+			name: "catalog source error",
 			cfg: func(t *testing.T, r *fakeRecorder) Config {
 				cfg := baseConfig(t, fakeLedgerSource{ledger: 1500}, r)
-				cfg.PathTemplate = "/v1/unpriced" // no rule for this path in mustPricer's schedule
+				cfg.Catalogs = fakeCatalogs{err: errCatalogUnavailable}
+				return cfg
+			},
+			req: func() *http.Request {
+				req := httptest.NewRequest("GET", "/v1/items", nil)
+				info := RequestInfo{Consumer: "GABC", Protocol: ProtocolX402}
+				return req.WithContext(WithRequestInfo(req.Context(), info))
+			},
+			wantCode: http.StatusInternalServerError,
+		},
+		{
+			name: "period opener error",
+			cfg: func(t *testing.T, r *fakeRecorder) Config {
+				cfg := baseConfig(t, fakeLedgerSource{ledger: 1500}, r)
+				cfg.Periods = fakePeriods{err: errPeriodUnavailable}
+				return cfg
+			},
+			req: func() *http.Request {
+				req := httptest.NewRequest("GET", "/v1/items", nil)
+				info := RequestInfo{Consumer: "GABC", Protocol: ProtocolX402}
+				return req.WithContext(WithRequestInfo(req.Context(), info))
+			},
+			wantCode: http.StatusInternalServerError,
+		},
+		{
+			name: "pricing error (unpriced endpoint)",
+			cfg: func(t *testing.T, r *fakeRecorder) Config {
+				cfg := baseConfig(t, fakeLedgerSource{ledger: 1500}, r)
+				cfg.PathTemplate = "/v1/unpriced" // no rule for this path in the schedule
 				return cfg
 			},
 			req: func() *http.Request {
@@ -325,7 +466,7 @@ func TestMiddleware_FailureSourcesAllFailClosed(t *testing.T) {
 			wantCode: http.StatusInternalServerError,
 		},
 		{
-			name: "pricer error (ledger before any published version)",
+			name: "pricing error (ledger before any published version)",
 			cfg: func(t *testing.T, r *fakeRecorder) Config {
 				return baseConfig(t, fakeLedgerSource{ledger: 1}, r) // schedule is effective from ledger 1000
 			},
@@ -539,9 +680,10 @@ func BenchmarkMiddleware(b *testing.B) {
 		Operator:     "GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM",
 		Method:       "GET",
 		PathTemplate: "/v1/items",
-		Pricer:       mustPricer(b, "1000"),
+		Catalogs:     fakeCatalogs{catalog: mustCatalog(b, "1000")},
 		Ledger:       fakeLedgerSource{ledger: 1500},
 		Recorder:     recorder,
+		Periods:      fakePeriods{period: &meter.Period{ID: 42}},
 	}
 
 	handler, err := Middleware(cfg)
@@ -623,9 +765,10 @@ func ExampleMiddleware() {
 		Operator:     "GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM",
 		Method:       "GET",
 		PathTemplate: "/v1/items",
-		Pricer:       meter.NewPricer(catalog),
+		Catalogs:     fakeCatalogs{catalog: catalog},
 		Ledger:       ledger,
 		Recorder:     recorder,
+		Periods:      fakePeriods{period: &meter.Period{ID: 42}},
 	}
 
 	mw, err := Middleware(cfg)
@@ -663,4 +806,110 @@ func (printRecorder) RecordRequest(_ context.Context, req RecordedRequest) error
 	fmt.Printf("recorded: %s %s consumer %s protocol %s\n", req.Method, req.PathTemplate, req.Consumer, req.Protocol)
 	fmt.Printf("%d unit(s) charged %s stroops price v%d observed ledger %d\n", req.UnitCount, req.ChargedAmount, req.PriceVersion, req.ObservedLedger)
 	return nil
+}
+
+// ExampleWithRequestInfo shows where WithRequestInfo sits: in the
+// middleware upstream of metering that has established who is paying
+// (in the collector, cmd/collector's header-reading middleware). It
+// attaches the caller's RequestInfo to the request context, and the
+// metering Middleware reads it back. RequestInfo is never derived by the
+// metering layer itself — verifying payment is a non-goal of this
+// package — so a request reaching Middleware without one fails closed
+// with a 500 instead of being recorded against nobody.
+//
+// The ledger, catalog, period, and recorder are the package's own test
+// stubs, so nothing touches Postgres or the network. There is no
+// // Output: line: the example is compiled by `go test` but deliberately
+// not run, so it pins the call shape of WithRequestInfo without
+// duplicating assertions — the round trip and the missing-RequestInfo
+// failure are asserted by TestMiddleware_RecordsAndCallsNext and
+// TestMiddleware_MissingRequestInfoFailsClosed.
+func ExampleWithRequestInfo() {
+	sched, err := meter.ParseSchedule([]byte(`{"rules":[{"method":"GET","path_template":"/v1/items","unit_price":"1000"}]}`))
+	if err != nil {
+		fmt.Println("ParseSchedule:", err)
+		return
+	}
+	catalog, err := meter.NewCatalog(meter.CatalogVersion{Version: 1, EffectiveLedger: 1000, Schedule: sched})
+	if err != nil {
+		fmt.Println("NewCatalog:", err)
+		return
+	}
+
+	metering, err := Middleware(Config{
+		Operator:     "GDOLCHAOYP63BEHGAUJJS5IVQNUXLPBWCHO2HZRBTZRU52XBMW2TRJLM",
+		Method:       "GET",
+		PathTemplate: "/v1/items",
+		Catalogs:     fakeCatalogs{catalog: catalog},
+		Ledger:       fakeLedgerSource{ledger: 1500},
+		Recorder:     &fakeRecorder{},
+		Periods:      fakePeriods{period: &meter.Period{ID: 42}},
+	})
+	if err != nil {
+		fmt.Println("Middleware:", err)
+		return
+	}
+
+	// identify stands in for whatever verified the payment upstream.
+	identify := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			info := RequestInfo{
+				Consumer: "GAJ46LDZSSYAB4YY6VMPM763P652ZROT7TBG3YYE3BZBAUZDXYDDK6OY",
+				Protocol: ProtocolX402,
+			}
+			next.ServeHTTP(w, r.WithContext(WithRequestInfo(r.Context(), info)))
+		})
+	}
+	paid := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/v1/items", nil)
+	rec := httptest.NewRecorder()
+	identify(metering(paid)).ServeHTTP(rec, req)
+}
+
+// ExampleRequestInfoFromContext shows the read side: a handler behind the
+// upstream middleware that called WithRequestInfo retrieves the caller's
+// RequestInfo, and the boolean reports whether one was attached at all.
+// The metering Middleware treats a missing RequestInfo as a wiring bug
+// and fails closed, and any other reader should do the same rather than
+// proceed with the zero value — an empty Consumer would otherwise be
+// metered and billed to nobody.
+//
+// There is no // Output: line: the example is compiled by `go test` but
+// deliberately not run, so it pins the call shape of
+// RequestInfoFromContext without duplicating assertions — both the
+// present and the missing case are asserted by
+// TestMiddleware_RecordsAndCallsNext and
+// TestMiddleware_MissingRequestInfoFailsClosed.
+// It opens no network or database connection.
+func ExampleRequestInfoFromContext() {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		info, ok := RequestInfoFromContext(r.Context())
+		if !ok {
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprintf(w, "consumer %s via %s", info.Consumer, info.Protocol)
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Present: attached upstream with WithRequestInfo.
+	ctx = WithRequestInfo(ctx, RequestInfo{
+		Consumer: "GAJ46LDZSSYAB4YY6VMPM763P652ZROT7TBG3YYE3BZBAUZDXYDDK6OY",
+		Protocol: ProtocolX402,
+	})
+	handler.ServeHTTP(httptest.NewRecorder(),
+		httptest.NewRequestWithContext(ctx, http.MethodGet, "/v1/items", nil))
+
+	// Missing: a bare context carries no RequestInfo, so ok is false.
+	if _, ok := RequestInfoFromContext(context.Background()); !ok {
+		fmt.Println("no RequestInfo attached")
+	}
 }

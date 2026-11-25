@@ -222,6 +222,10 @@ Events: `("statement", "anchor")` with
    plus your own signed one appended alongside it) makes the host authenticate whichever
    entry it finds first — if that's the unsigned one, decoding its `Void` signature as the
    expected `Vec` fails with `UnexpectedType`. De-duplicate by address; never concatenate.
+   Subsequent `stellar-cli` releases only automate single-party `--auth` for local
+   CLI identities, not multi-party coordination between independent off-chain signers;
+   programmatic authorization entry construction and two-pass simulation in Go
+   (`internal/stellar/invoke.go`) remain necessary and permanent.
 
 ### `one-way-channel` (external, unaudited)
 
@@ -418,6 +422,12 @@ naming the missing variable — never start with a zero value.
 | `TB_SETTLER_TICK` | `30s` | Poll interval |
 | `TB_INDEXER_START_LEDGER` | `4590000` | Where ingestion begins |
 | `TB_COLLECTOR_ADDR` | `:8080` | Listen address |
+| `TB_COLLECTOR_PERIOD_TICK` | `1m` | Optional. How often the collector closes billing periods that have run their course |
+| `TB_COLLECTOR_ANCHOR_TICK` | `5m` | Optional. How often the collector anchors closed periods on chain |
+| `TB_ANCHOR_TOKEN` | `C...` | Optional. The SEP-41 token x402 and mpp_charge statements are denominated in; without it those periods are metered and closed but not anchored |
+| `TB_SETTLER_METRICS_ADDR` | `:9101` | Optional. Settler listen address for `/metrics`, `/healthz`, `/readyz` |
+| `TB_INDEXER_ADDR` | `:9102` | Optional. Indexer listen address for `/metrics`, `/healthz`, `/readyz` |
+| `TB_INDEXER_TICK` | `5s` | Optional. How often the indexer polls the chain for new events |
 | `TB_LOG_LEVEL` | `info` | |
 
 Secrets never appear in logs, error messages, metrics labels, or commits. Add a test that

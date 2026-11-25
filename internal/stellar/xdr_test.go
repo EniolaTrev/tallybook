@@ -25,6 +25,38 @@ func ExampleDecodeU64() {
 	// 42
 }
 
+func ExampleDecodeU32() {
+	v, err := DecodeU32(ScvU32(42))
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(v)
+	// Output:
+	// 42
+}
+
+func ExampleDecodeI32() {
+	i := xdr.Int32(-42)
+	v, err := DecodeI32(xdr.ScVal{Type: xdr.ScValTypeScvI32, I32: &i})
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(v)
+	// Output:
+	// -42
+}
+
+func ExampleDecodeI64() {
+	i := xdr.Int64(9007199254740992)
+	v, err := DecodeI64(xdr.ScVal{Type: xdr.ScValTypeScvI64, I64: &i})
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(v)
+	// Output:
+	// 9007199254740992
+}
+
 func ExampleScvI32() {
 	v, err := DecodeI32(ScvI32(-42))
 	if err != nil {
@@ -55,6 +87,26 @@ func ExampleScvSymbol() {
 	// price_v
 }
 
+func ExampleDecodeSymbol() {
+	v, err := DecodeSymbol(ScvSymbol("anchor"))
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(v)
+	// Output:
+	// anchor
+}
+
+func ExampleDecodeString() {
+	v, err := DecodeString(ScvString("price/v1.json"))
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(v)
+	// Output:
+	// price/v1.json
+}
+
 func ExampleScvAddress() {
 	addr := "GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX"
 	v, err := ScvAddress(addr)
@@ -68,6 +120,30 @@ func ExampleScvAddress() {
 	fmt.Println(got)
 	// Output:
 	// GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX
+}
+
+func ExampleDecodeAddress() {
+	v, err := ScvAddress("GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX")
+	if err != nil {
+		log.Fatal(err)
+	}
+	addr, err := DecodeAddress(v)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(addr)
+	// Output:
+	// GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX
+}
+
+func ExampleDecodeBool() {
+	v, err := DecodeBool(ScvBool(true))
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(v)
+	// Output:
+	// true
 }
 
 func ExampleErrWrongScValType_Error() {
@@ -97,6 +173,65 @@ func ExampleDecodeVec() {
 	fmt.Println(uVal, sVal)
 	// Output:
 	// 42 hello
+}
+
+// ExampleDecodeMap decodes the map shape every contract binding in this
+// package relies on — Symbol keys, one entry per struct field — and shows
+// the one thing DecodeMap refuses to do: accept an entry whose key is not
+// a Symbol. That entry is an error, not a silently dropped field, so a
+// struct field that never arrives on chain fails loudly here instead of
+// decoding as a zero value.
+func ExampleDecodeMap() {
+	decoded, err := DecodeMap(ScvMap([]xdr.ScMapEntry{
+		MapEntry("amount", ScvU64(1250)),
+		MapEntry("price_v", ScvU32(7)),
+	}))
+	if err != nil {
+		log.Fatal(err)
+	}
+	amount, err := DecodeU64(decoded["amount"])
+	if err != nil {
+		log.Fatal(err)
+	}
+	priceVersion, err := DecodeU32(decoded["price_v"])
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("amount=%d price_v=%d\n", amount, priceVersion)
+
+	// A key that isn't a Symbol is rejected, not dropped.
+	_, err = DecodeMap(ScvMap([]xdr.ScMapEntry{
+		{Key: ScvString("amount"), Val: ScvU64(1250)},
+	}))
+	fmt.Println("non-symbol key rejected:", err != nil)
+
+	// Output:
+	// amount=1250 price_v=7
+	// non-symbol key rejected: true
+}
+
+func ExampleDecodeI128() {
+	v, err := ScvI128(big.NewInt(-1_000_000))
+	if err != nil {
+		panic(err)
+	}
+	n, err := DecodeI128(v)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(n)
+	// Output:
+	// -1000000
+}
+
+func ExampleDecodeBytes() {
+	got, err := DecodeBytes(ScvBytes([]byte{0xde, 0xad, 0xbe, 0xef}))
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("%x\n", got)
+	// Output:
+	// deadbeef
 }
 
 func TestScvU32_RoundTrip(t *testing.T) {

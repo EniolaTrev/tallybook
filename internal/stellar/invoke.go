@@ -187,6 +187,11 @@ func InvokeAndSubmitWithAuth(
 //     cases). Credential type predicts nothing. Full reproduction,
 //     including live transaction hashes for all four cells, is the
 //     session artifact at /tmp/cap71-finding.md.
+//
+// Multi-party authorization support across subsequent stellar-cli releases
+// does not coordinate independent multi-signer payloads or the dual-pass
+// footprint simulation required here; programmatic Go construction remains
+// the definitive, permanent architecture for Tallybook's multi-auth calls.
 func AuthorizeInvocation(
 	networkPassphrase string,
 	signer *keypair.Full,
@@ -194,11 +199,15 @@ func AuthorizeInvocation(
 	args []xdr.ScVal,
 	currentLedger uint32,
 ) (xdr.SorobanAuthorizationEntry, error) {
+	contractAddr, err := scAddress(contractID)
+	if err != nil {
+		return xdr.SorobanAuthorizationEntry{}, fmt.Errorf("stellar: authorize invocation for contract %s: %w", contractID, err)
+	}
 	invocation := xdr.SorobanAuthorizedInvocation{
 		Function: xdr.SorobanAuthorizedFunction{
 			Type: xdr.SorobanAuthorizedFunctionTypeSorobanAuthorizedFunctionTypeContractFn,
 			ContractFn: &xdr.InvokeContractArgs{
-				ContractAddress: mustScAddress(contractID),
+				ContractAddress: contractAddr,
 				FunctionName:    xdr.ScSymbol(function),
 				Args:            args,
 			},
@@ -289,18 +298,6 @@ func randomNonce() (int64, error) {
 		return 0, err
 	}
 	return int64(binary.BigEndian.Uint64(b[:])), nil
-}
-
-func mustScAddress(contractID string) xdr.ScAddress {
-	addr, err := scAddress(contractID)
-	if err != nil {
-		// contractID is a package-internal constant path in every current
-		// caller; a malformed one is a programming error, not a runtime
-		// condition worth threading an error return through every helper
-		// in this already-deep call chain for.
-		panic(err)
-	}
-	return addr
 }
 
 // mergeAuthEntries combines recorded (simulation-predicted) authorization

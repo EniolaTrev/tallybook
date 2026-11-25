@@ -7,6 +7,7 @@ import (
 	"log"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -533,4 +534,171 @@ func ExampleAnchorer_AnchorPeriod() {
 
 	// Output:
 	// anchored with concrete inputs, cancelled context honoured: true
+}
+
+// ExampleAnchorer_ReconcileAnchoring shows the restart step that runs
+// before a period is anchored again. A crash between recording a
+// 'submitting' anchor attempt and confirming it leaves the attempt open;
+// ReconcileAnchoring settles which way it went. anchor's return value (the
+// statement seq) is only known after the call succeeds, so there is no key
+// to look up directly. Instead every seq list_statements returns for the
+// scope is fetched and compared, by period range and a recomputed usage
+// root, with what the attempt would have submitted. A match marks the
+// period anchored; no match marks the attempt failed so AnchorPeriod can
+// try again. Resolved false means there was nothing to reconcile.
+//
+// The pool and StatementReader are the package's own test stubs: an
+// empty fakeStatementReader stands in for statement_registry. There is no
+// // Output: line on purpose: ReconcileAnchoring reads the period, its
+// attempt and its requests from Postgres, so its result depends on
+// database state an example cannot set up without a live database.
+// Without an Output line `go test` compiles the example but does not run
+// it, so the zero-value pool is never dialed. It is here to pin the call
+// shape: a signature change breaks the build. The behaviour is covered by
+// the reconcile tests in anchor_idempotency_test.go.
+func ExampleAnchorer_ReconcileAnchoring() {
+	a := NewAnchorer(&pgxpool.Pool{})
+	statements := &fakeStatementReader{statements: map[uint64]*stellar.Statement{}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	res, err := a.ReconcileAnchoring(ctx, 1, statements)
+	if err != nil {
+		fmt.Println("reconcile anchoring:", err)
+		return
+	}
+	switch {
+	case !res.Resolved:
+		fmt.Println("nothing to reconcile for period", res.PeriodID)
+	case res.Anchored:
+		fmt.Println("already anchored as statement", res.StatementSeq)
+	default:
+		fmt.Println("attempt marked failed; period", res.PeriodID, "can be anchored again")
+	}
+}
+
+// ExampleAnchorer_DueForAnchoring shows the list a caller drives anchoring
+// from. DueForAnchoring returns every period whose status is 'closed',
+// oldest first: a period joins the list when it is closed and leaves it
+// when AnchorPeriod marks it anchored, so there is no separate queue to
+// keep in sync. Each candidate carries its protocol and channel because
+// AnchorPeriod deliberately does not work out the statement's token or
+// settled amount on its own; the caller resolves both from those fields
+// before anchoring, the way internal/anchor's Driver.AnchorDue does.
+//
+// The pool is the zero-value stub ExampleAnchorer_ReconcileAnchoring also
+// uses. There is no // Output: line on purpose: DueForAnchoring is a
+// single query against the periods table, so its result is whatever
+// Postgres holds, and an example cannot set that up without a live
+// database. Without an Output line `go test` compiles the example but
+// does not run it, so the zero-value pool is never dialed. It is here to
+// pin the call shape: a signature change, or a change to AnchorCandidate's
+// fields used below, breaks the build.
+func ExampleAnchorer_DueForAnchoring() {
+	a := NewAnchorer(&pgxpool.Pool{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	candidates, err := a.DueForAnchoring(ctx)
+	if err != nil {
+		fmt.Println("due for anchoring:", err)
+		return
+	}
+	for _, c := range candidates {
+		// Channel is non-empty only for mpp_session periods, whose
+		// settled amount comes from the channel rather than the period.
+		fmt.Printf("period %d: %s consumer %s ledgers %d-%d price v%d channel %q\n",
+			c.PeriodID, c.Protocol, c.Consumer, c.PeriodStart, c.PeriodEnd, c.PriceVersion, c.Channel)
+	}
+}
+
+// ExampleAnchorer_BilledAmount shows how a caller learns a period's billed
+// amount before it chooses amount_settled. BilledAmount sums the period's
+// requests' charged amounts, which is exactly the amount_billed
+// AnchorPeriod will submit. statement_registry rejects a statement whose
+// settled amount exceeds its billed amount, so a caller capping the
+// settled figure — as internal/anchor does for an mpp_session channel,
+// whose withdrawals are cumulative across periods — has to know the
+// billed one first. Money stays a *big.Int throughout (CLAUDE.md §8).
+//
+// The pool is the zero-value stub ExampleAnchorer_ReconcileAnchoring also
+// uses. There is no // Output: line on purpose: BilledAmount reads the
+// period and its requests from Postgres, so its result depends on
+// database state an example cannot set up without a live database.
+// Without an Output line `go test` compiles the example but does not run
+// it, so the zero-value pool is never dialed. It is here to pin the call
+// shape: a signature change breaks the build.
+func ExampleAnchorer_BilledAmount() {
+	a := NewAnchorer(&pgxpool.Pool{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	billed, err := a.BilledAmount(ctx, 1)
+	if err != nil {
+		// An empty period wraps ErrPeriodEmpty: there is nothing to
+		// anchor, and the chain rejects an empty statement anyway.
+		if errors.Is(err, ErrPeriodEmpty) {
+			fmt.Println("period 1 has no requests to anchor")
+			return
+		}
+		fmt.Println("billed amount:", err)
+		return
+	}
+
+	// Cap what the caller believes has settled at what was billed.
+	settled := big.NewInt(5000)
+	if settled.Cmp(billed) > 0 {
+		settled = billed
+	}
+	fmt.Println("amount billed:", billed, "amount settled:", settled)
+}
+
+// ExampleAnchorer_UnresolvedAttempts shows the restart step that comes
+// first, before any period is anchored again: list every period whose
+// anchor attempt is still 'submitting', then hand each one to
+// ReconcileAnchoring. §6's ordering rule 3 is why the order matters — an
+// attempt that actually landed must not be retried into a second
+// statement, and one that did not must not block a fresh attempt
+// forever. The IDs come back distinct and in ascending order, and an
+// empty slice with a nil error means there is nothing to reconcile. This
+// is the loop internal/anchor's Driver.ReconcileUnresolved runs.
+//
+// The pool and StatementReader are the package's own test stubs: an
+// empty fakeStatementReader stands in for statement_registry. There is no
+// // Output: line on purpose: UnresolvedAttempts is a single query against
+// the anchor_attempts table, so its result is whatever Postgres holds,
+// and an example cannot set that up without a live database. Without an
+// Output line `go test` compiles the example but does not run it, so the
+// zero-value pool is never dialed. It is here to pin the call shape: a
+// signature change breaks the build. The behaviour is covered by the
+// reconcile tests in anchor_idempotency_test.go.
+func ExampleAnchorer_UnresolvedAttempts() {
+	a := NewAnchorer(&pgxpool.Pool{})
+	statements := &fakeStatementReader{statements: map[uint64]*stellar.Statement{}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	ids, err := a.UnresolvedAttempts(ctx)
+	if err != nil {
+		fmt.Println("unresolved attempts:", err)
+		return
+	}
+	if len(ids) == 0 {
+		fmt.Println("no anchor attempts left in flight")
+		return
+	}
+	for _, id := range ids {
+		res, err := a.ReconcileAnchoring(ctx, id, statements)
+		if err != nil {
+			// One period's failure does not stop the rest; it stays
+			// unresolved and is picked up on the next restart.
+			fmt.Println("reconcile period", id, ":", err)
+			continue
+		}
+		fmt.Println("period", id, "resolved:", res.Resolved, "anchored:", res.Anchored)
+	}
 }
