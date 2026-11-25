@@ -76,6 +76,82 @@ func ExampleMatchesTopic() {
 	// Output: true
 }
 
+func ExampleChannelRefundEvent() {
+	from := "GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX"
+	fromVal, err := ScvAddress(from)
+	if err != nil {
+		log.Fatal(err)
+	}
+	amountVal, err := ScvI128(big.NewInt(9999))
+	if err != nil {
+		log.Fatal(err)
+	}
+	valueB64, err := MarshalScValBase64(ScvVec([]xdr.ScVal{
+		fromVal,
+		amountVal,
+	}))
+	if err != nil {
+		log.Fatal(err)
+	}
+	ev, err := DecodeChannelRefundEvent(valueB64)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("From=%s Amount=%d\n", ev.From, ev.Amount)
+	// Output: From=GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX Amount=9999
+}
+
+func ExampleChannelOpenEvent() {
+	from := "GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX"
+	to := "GCWV2YQTXWP72QTU5YX5FM237RCHY6REV6BL6TKBEFCQ5R2QCTX67VUG"
+	token := "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+	var commitmentKey [32]byte
+	for i := range commitmentKey {
+		commitmentKey[i] = byte(i)
+	}
+	fromVal, err := ScvAddress(from)
+	if err != nil {
+		log.Fatal(err)
+	}
+	toVal, err := ScvAddress(to)
+	if err != nil {
+		log.Fatal(err)
+	}
+	tokenVal, err := ScvAddress(token)
+	if err != nil {
+		log.Fatal(err)
+	}
+	amountVal, err := ScvI128(big.NewInt(500))
+	if err != nil {
+		log.Fatal(err)
+	}
+	valueB64, err := MarshalScValBase64(ScvVec([]xdr.ScVal{
+		fromVal, ScvBytes(commitmentKey[:]), toVal, tokenVal, amountVal, ScvU32(20),
+	}))
+	if err != nil {
+		log.Fatal(err)
+	}
+	ev, err := DecodeChannelOpenEvent(valueB64)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("From=%s To=%s Token=%s Amount=%d RefundWaitingPeriod=%d\n", ev.From, ev.To, ev.Token, ev.Amount, ev.RefundWaitingPeriod)
+	// Output: From=GAAACAQDAQCQMBYIBEFAWDANBYHRAEISCMKBKFQXDAMRUGY4DUPB7JZX To=GCWV2YQTXWP72QTU5YX5FM237RCHY6REV6BL6TKBEFCQ5R2QCTX67VUG Token=CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC Amount=500 RefundWaitingPeriod=20
+}
+
+func ExampleChannelCloseEvent() {
+	valueB64, err := MarshalScValBase64(ScvVec([]xdr.ScVal{ScvU32(4700123)}))
+	if err != nil {
+		log.Fatal(err)
+	}
+	ev, err := DecodeChannelCloseEvent(valueB64)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("EffectiveAtLedger=%d\n", ev.EffectiveAtLedger)
+	// Output: EffectiveAtLedger=4700123
+}
+
 // TestDecodePriceBookPublishEvent_AgainstRealEvents decodes two genuine
 // price_book publish events captured live from testnet — one from this
 // package's own pricebook_test.go capture run, one from an earlier
