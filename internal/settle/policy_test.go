@@ -317,3 +317,53 @@ func ExampleDecide() {
 	// age_threshold
 	// 500000
 }
+
+// ExamplePolicy shows how the settler binary builds a Policy and what the
+// zero value means. Policy has no constructor and nothing in this package
+// fills any of its fields in: every field is the caller's to set, from
+// TB_SAFETY_MARGIN_LEDGERS, TB_MAX_EXPOSURE and TB_MAX_EXPOSURE_AGE
+// (cmd/settler/main.go copies them straight out of internal/config,
+// which refuses to start with any of them missing).
+//
+// The zero value is legal to pass to Decide but almost never what an
+// operator wants: a nil MaxExposure and a zero MaxExposureAge each
+// disable their threshold entirely, and a zero SafetyMarginLedgers only
+// fires deadline pressure once the refund deadline has actually arrived —
+// too late to land a settle before the payer can refund. Only the
+// close_start trigger still works under the zero value.
+func ExamplePolicy() {
+	now := time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC)
+	oldest := now.Add(-48 * time.Hour)
+	deadline := uint32(4_591_000)
+
+	// 20 XLM unsettled for two days, 1000 ledgers before its refund
+	// deadline: every configured threshold has been crossed.
+	state := ChannelState{
+		Address:              testChannel,
+		Status:               string(ChannelStatusOpen),
+		RefundDeadlineLedger: &deadline,
+		Exposure: &Exposure{
+			Channel:              testChannel,
+			HighestVerified:      big.NewInt(200_000_000),
+			LastSettledAmount:    big.NewInt(0),
+			Unsettled:            big.NewInt(200_000_000),
+			OldestUnsettledSince: &oldest,
+		},
+	}
+	const currentLedger = 4_590_000
+
+	var zero Policy
+	d := Decide(zero, state, currentLedger, now)
+	fmt.Printf("zero value: settle=%t trigger=%q\n", d.ShouldSettle, d.Trigger)
+
+	configured := Policy{
+		SafetyMarginLedgers: 1440,                   // TB_SAFETY_MARGIN_LEDGERS
+		MaxExposure:         big.NewInt(10_000_000), // TB_MAX_EXPOSURE, stroops
+		MaxExposureAge:      24 * time.Hour,         // TB_MAX_EXPOSURE_AGE
+	}
+	d = Decide(configured, state, currentLedger, now)
+	fmt.Printf("configured: settle=%t trigger=%q amount=%s\n", d.ShouldSettle, d.Trigger, d.Amount)
+	// Output:
+	// zero value: settle=false trigger=""
+	// configured: settle=true trigger="deadline_pressure" amount=200000000
+}

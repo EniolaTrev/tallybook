@@ -36,6 +36,48 @@ func ExampleMetrics_ServeHTTP() {
 	// text/plain; version=0.0.4; charset=utf-8
 }
 
+// ExampleMetrics shows how the settler binary builds and mounts Metrics.
+// A Metrics must come from NewMetrics: its fields are unexported, and the
+// zero value has no pool, so serving it would panic on the first query.
+// The caller supplies the pool and a LedgerSource; the Daemon is
+// optional — pass the one this process runs to add the
+// last-chain-read gauge, or nil to omit it.
+//
+// Every other metric is read from Postgres. Here the request's context is
+// already cancelled, so each of those queries fails and, per ServeHTTP's
+// partial-data rule, is logged and left out rather than failing the
+// response. What remains is the gauge that comes from the Daemon alone,
+// whose chain read was recorded a moment ago, so it reads 0 seconds.
+func ExampleMetrics() {
+	pool, err := pgxpool.New(context.Background(), "host=localhost user=unused dbname=unused port=5432")
+	if err != nil {
+		fmt.Println("pool:", err)
+		return
+	}
+	defer pool.Close()
+
+	daemon := NewDaemon(pool, NewCalculator(pool), NewSubmitter(pool), nil, nil,
+		fakeLedgerSource{ledger: 4_590_000}, Policy{})
+	daemon.chainRead.recordSuccess(time.Now())
+
+	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", NewMetrics(pool, fakeLedgerSource{ledger: 4_590_000}, daemon))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest("GET", "/metrics", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	fmt.Println(rec.Code)
+	fmt.Print(rec.Body.String())
+	// Output:
+	// 200
+	// # HELP tallybook_settle_last_chain_read_seconds Seconds since the settler's last successful read of the current ledger.
+	// # TYPE tallybook_settle_last_chain_read_seconds gauge
+	// tallybook_settle_last_chain_read_seconds 0
+}
+
 func serveMetrics(t *testing.T, m *Metrics) string {
 	t.Helper()
 	req := httptest.NewRequest("GET", "/metrics", nil)
