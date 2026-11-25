@@ -255,6 +255,24 @@ func TestChannel_PrepareCommitment(t *testing.T) {
 	}
 }
 
+// ExampleChannel demonstrates constructing a Channel binding.
+// The zero value of Channel has all fields zero-valued.
+// A caller must provide a client, contract ID, and network passphrase.
+func ExampleChannel() {
+	// Zero value: all fields are zero-valued (nil Client, empty strings)
+	var _ = Channel{}
+	//
+	// Constructed via NewChannel (caller must provide client, contract ID, and network passphrase):
+	//   ch := NewChannel(client, "CB2IEP4SQ2GC5747HFHNMXEYWEULC5Z5TTTLET2QA4CAA5SYCWAXFKAW", "Test SDF Network ; September 2015")
+	//   _ = ch.Token(context.Background())
+	//
+	// The package fills in:
+	//   - Client for RPC communication
+	//   - NetworkPassphrase stored for use by all methods
+	//   - All getter methods (Token, From, To, etc.) perform simulated calls
+	_ = struct{}{}
+}
+
 // simulateResultServer returns an httptest.Server that answers any
 // simulateTransaction call with a minimal success response whose single
 // result is resultXDR (already base64-encoded ScVal), and getLatestLedger
